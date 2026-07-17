@@ -1,0 +1,24 @@
+# build output
+slugs
+*.o
+
+# generated index (rebuilt by `make`; or embedded into the gguf via `make pack`)
+keys.bin
+slugs.tbl
+pca.bin
+
+# agent tooling (local dev only, not part of the project)
+.agents/
+.claude/
+.gemini/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.agentignore
+.aiderignore
+.claudeignore
+.cursorignore
+.geminiignore
+.claude-template-applied
+
+.DS_Store

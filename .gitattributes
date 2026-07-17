@@ -1,0 +1,2 @@
+minilm.gguf filter=lfs diff=lfs merge=lfs -text
+simple-wikipedia-20260301.parquet filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,3 @@
+# Only needed to (re)build the index from the parquet (dump.py). Querying and
+# the whole C build need none of this.
+pyarrow>=12
