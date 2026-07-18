@@ -1,4 +1,29 @@
+---
+license: apache-2.0
+language:
+  - en
+base_model: sentence-transformers/all-MiniLM-L6-v2
+base_model_relation: quantized
+pipeline_tag: sentence-similarity
+tags:
+  - gguf
+  - sentence-transformers
+  - feature-extraction
+  - sentence-similarity
+  - semantic-search
+  - embeddings
+  - wikipedia
+  - simple-english-wikipedia
+---
+
 # simple-wikipedia-slugs
+
+`minilm.gguf` is all-MiniLM-L6-v2 quantized to Q4_0 and augmented, in one file,
+with a compact semantic index over all 279,678 Simple English Wikipedia
+articles: ask a question, get back the matching article ids. The rest of the
+repo is a tiny pure-C reference tool that builds the index and queries the
+model. Model weights are Apache-2.0; the Wikipedia-derived index is CC BY-SA
+4.0.
 
 A very small semantic index over the whole Simple English Wikipedia. Each
 article is compressed to a single 256-bit fingerprint. A natural-language
