@@ -43,7 +43,7 @@
 #define PCA_DIM             256
 #define KEY_BYTES            32           /* PCA_DIM / 8 */
 #define DEFAULT_TOP_K         5
-#define LOW_CONFIDENCE_DIST 100           /* ~ orthogonal for 256-bit keys */
+#define LOW_CONFIDENCE_DIST  82  /* past this, no confident match (real < ~76) */
 #define PCA_SAMPLE_MAX   100000   /* cap PCA fit sample for speed/memory */
 #define MODEL_PATH "minilm.gguf"
 #define KEYS_PATH "keys.bin"

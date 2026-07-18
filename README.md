@@ -178,6 +178,35 @@ A distance histogram for a query (how separable it is from the corpus):
     ./slugs --stats "What is dark matter?"
 
 
+## Reading the distance
+
+Each result carries a Hamming distance `d` (0 = identical direction, 128 =
+unrelated). It is the only confidence signal -- the search has no "no match"
+mode, it always returns the nearest keys, so read `d` to judge them:
+
+    d < 60      strong match (usually the exact article)
+    60 - 76     relevant / semantically close
+    77 - 82     weak; possibly the best of a bad lot
+    > 82        no confident match -- flagged [low]
+
+Gibberish, or a concept absent from Simple English Wikipedia, has no cluster:
+the whole corpus sits near d = 120-128 (orthogonal) and the "nearest" article
+(d ~ 85-95) is just the closest of 279k near-random points -- an unrelated
+short article, sometimes only a spelling echo of the query. Full-sentence
+questions embed real meaning and match semantically; a single rare word embeds
+mostly its subword spelling and tends to match look-alikes, not sense. Example
+`--stats` output for the gibberish query "fkjsdfhshkn":
+
+    nearest distance: 90 (of 256 bits)
+      88.. 95            19  ( 0.01%)
+      96..103           362  ( 0.13%)
+     104..111  ##      5340  ( 1.91%)
+     112..119  #####   33924  (12.13%)   <- corpus piled up near orthogonal
+     120..127  ####### 91537  (32.73%)
+
+Nothing sits below d = 88: no real neighbour exists.
+
+
 ## One self-contained file
 
 The three index artifacts (`pca.bin`, `keys.bin`, `slugs.tbl`) are small, so
