@@ -1,5 +1,6 @@
 # build output
 slugs
+llmembed
 *.o
 
 # generated index (rebuilt by `make`; or embedded into the gguf via `make pack`)
@@ -22,3 +23,6 @@ GEMINI.md
 .claude-template-applied
 
 .DS_Store
+
+# eval scratch
+tmp/

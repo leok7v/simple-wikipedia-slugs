@@ -51,7 +51,9 @@ though it reads a GGUF model, and nothing to install.
                                         pass, threaded batch embedding
     core.c / core.h                     vendored containers: growable arrays,
                                         chars buffer, hash map, OOM malloc
-    minilm.gguf                         the encoder model (~20 MB, Q4_0)
+    extract.py                          parquet -> index input: per-article body
+                                        selection (extractive for long articles)
+    minilm.gguf                         the encoder model (Q4_0) + baked index
     simple-wikipedia-20260301.parquet   source corpus, only used to (re)build
                                         the index: 279,678 articles
     pca.bin                             PCA mean + 256 components (384-d)
@@ -97,11 +99,20 @@ dataset and rebuild the index.
 
 ## How it works
 
-Encode. Each article's text (its lead, up to ~510 tokens) is embedded by
-all-MiniLM-L6-v2 into a 384-dimensional unit vector. llm.c parses the GGUF,
-dequantizes the Q4_0 / Q8_0 / F16 weights to f32, tokenizes with the BERT
-WordPiece scheme, runs the 6 encoder blocks, mean-pools and L2-normalizes. It
-matches llama.cpp's embeddings to cosine ~1.0 on clean English text.
+Select. Each article is reduced to a compact, on-topic body (extract.py). A
+short or medium article keeps its first ~1200 characters (cut on a sentence
+boundary) -- for most articles that is the whole thing. A long article
+(> 8000 chars) instead gets title-guided *extractive* selection: it is split
+into paragraphs, the title and every paragraph are embedded, and the
+paragraphs most similar to the title are kept (in original order). This drops
+the tangents that otherwise blur a long article's mean-pooled vector, so
+famous long topics (Einstein, World War II) still land on their own article.
+
+Encode. That body is embedded by all-MiniLM-L6-v2 into a 384-dimensional unit
+vector. llm.c parses the GGUF, dequantizes the Q4_0 / Q8_0 / F16 weights to
+f32, tokenizes with the BERT WordPiece scheme, runs the 6 encoder blocks,
+mean-pools and L2-normalizes. It matches llama.cpp's embeddings to cosine ~1.0
+on clean English text.
 
 Reduce. A PCA fitted over the corpus projects 384 dimensions down to 256,
 keeping the directions of largest variance.
@@ -133,15 +144,18 @@ The dot-product kernel behind every matmul auto-vectorizes under
 `LLM_THREADS` to override).
 
 Building the index from the parquet is the only step that needs anything more
-(python3 + pyarrow, to read the parquet):
+(python3 + pyarrow, to read the parquet). It still uses no third-party ML
+stack: the long-article extraction embeds paragraphs with `llmembed`, which is
+just llm.c built with -DLLM_MAIN.
 
-    make              # build the binary, then build the index (slow, one-time)
+    make              # build slugs + llmembed, then the index (slow, one-time)
     make index        # just the index artifacts
     make pack         # build the index and embed it into minilm.gguf
-    make clean        # remove binary + index artifacts
+    make clean        # remove binaries + index artifacts
 
-`make index` embeds all 279,678 articles once; the keys are tiny and searching
-them is instant.
+`make index` embeds all 279,678 articles once (plus the paragraphs of the
+~5,500 long articles for extraction); the keys are tiny and searching them is
+instant.
 
 
 ## Asking a question
