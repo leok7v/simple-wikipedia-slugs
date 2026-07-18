@@ -207,6 +207,30 @@ mostly its subword spelling and tends to match look-alikes, not sense. Example
 Nothing sits below d = 88: no real neighbour exists.
 
 
+## Query with phrases, not single words
+
+The distance is a nearest-neighbour signal, so a query always returns
+something; the *meaning* comes from context. A full question ("What is dark
+matter?") embeds enough meaning to match semantically. A single rare or
+out-of-corpus word embeds mostly its own spelling -- its subword (WordPiece)
+tokens dominate the vector -- so it retrieves titles that merely *look* like
+it, not ones about it. Real words with no Simple-Wikipedia article are matched
+by surface form:
+
+    borborygmus  ->  "Bo..." towns   (Boligee, Bordj Bou Arreridj)
+    susurrus     ->  "Su..." places  (Sucre, Sukkur, Sufers)
+    tsundoku     ->  Japanese names  (Maki Kaji, Nobuo Kawaguchi)
+
+So embedding search generalises where there is context (phrases, questions)
+and degrades to spelling-match for isolated rare terms.
+
+When wiring this in as an LLM / MCP tool, instruct the calling model to:
+
+  - phrase the query as a sentence or question, not a bare keyword;
+  - treat a `[low]` result (d > 82) as "no good match" and answer from its own
+    knowledge rather than the returned articles.
+
+
 ## One self-contained file
 
 The three index artifacts (`pca.bin`, `keys.bin`, `slugs.tbl`) are small, so
