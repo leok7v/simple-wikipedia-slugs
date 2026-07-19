@@ -15,10 +15,10 @@
  * Not implemented (not needed for embeddings): generation, sampling, KV cache,
  * causal masking. BERT attention here is full/bidirectional.
  *
- * Tokenizer scope: English-pragmatic. Lowercases ASCII, splits on ASCII
- * whitespace/punctuation, greedy WordPiece against the GGUF vocab. No Unicode
- * NFD accent-stripping, so accented / CJK input diverges from the reference
- * tokenizer (rare in Simple English; falls back to [UNK]).
+ * Tokenizer scope: lowercases ASCII, folds Latin accents to their ASCII base
+ * (BERT-style NFD + combining-mark drop), splits on ASCII and common Unicode
+ * punctuation, greedy WordPiece against the GGUF vocab. Non-Latin scripts
+ * (CJK, Greek) fall back to [UNK] (rare in Simple English).
  *
  * Style: snake_case, star-attached pointers, single status flag, no early
  * exits.
@@ -270,6 +270,84 @@ static char lower_ascii(unsigned char c) {
     return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
 }
 
+/* BERT's basic tokenizer NFD-decomposes then drops combining marks, so accented
+ * Latin turns into its ASCII base ("Zürich" -> "zurich", "Marić" -> "maric").
+ * These tables fold the precomposed Latin-1 Supplement (0x00C0..0x00FF) and
+ * Latin Extended-A (0x0100..0x017F) letters to a lowercase ASCII base, or 0 for
+ * the non-decomposable ones (ß, ø, ł, ligatures) which are left as-is. */
+static const char latin1_fold[64] = {
+    'a','a','a','a','a','a',  0 ,'c','e','e','e','e','i','i','i','i',
+     0 ,'n','o','o','o','o','o', 0 , 0 ,'u','u','u','u','y', 0 , 0 ,
+    'a','a','a','a','a','a',  0 ,'c','e','e','e','e','i','i','i','i',
+     0 ,'n','o','o','o','o','o', 0 , 0 ,'u','u','u','u','y', 0 ,'y'
+};
+static const char latinA_fold[128] = {
+    'a','a','a','a','a','a','c','c','c','c','c','c','c','c','d','d',
+     0 , 0 ,'e','e','e','e','e','e','e','e','e','e','g','g','g','g',
+    'g','g','g','g','h','h', 0 , 0 ,'i','i','i','i','i','i','i','i',
+    'i','i', 0 , 0 ,'j','j','k','k', 0 ,'l','l','l','l','l','l','l',
+    'l', 0 , 0 ,'n','n','n','n','n','n', 0 , 0 , 0 ,'o','o','o','o',
+    'o','o', 0 , 0 ,'r','r','r','r','r','r','s','s','s','s','s','s',
+    's','s','t','t','t','t', 0 , 0 ,'u','u','u','u','u','u','u','u',
+    'u','u','u','u','w','w','y','y','y','z','z','z','z','z','z','s'
+};
+
+/* Decode one UTF-8 codepoint at s (len bytes available); *adv gets its byte
+ * length. Assumes well-formed UTF-8 (Wikipedia text is); a truncated lead is
+ * returned as its raw byte. */
+static uint32_t utf8_decode(const char *s, int len, int *adv) {
+    unsigned char c = (unsigned char)s[0];
+    uint32_t cp;
+    int n;
+    if (c < 0x80)                 { cp = c;          n = 1; }
+    else if ((c & 0xE0) == 0xC0)  { cp = c & 0x1Fu;  n = 2; }
+    else if ((c & 0xF0) == 0xE0)  { cp = c & 0x0Fu;  n = 3; }
+    else if ((c & 0xF8) == 0xF0)  { cp = c & 0x07u;  n = 4; }
+    else                          { cp = c;          n = 1; }
+    if (n > len) { cp = c; n = 1; }
+    for (int k = 1; k < n; k++) {
+        cp = (cp << 6) | ((unsigned char)s[k] & 0x3Fu);
+    }
+    *adv = n;
+    return cp;
+}
+
+enum { CP_CHARS, CP_PASS, CP_PUNCT, CP_SPACE, CP_DROP };
+
+/* Classify a codepoint for tokenization, matching BERT's basic tokenizer:
+ * ASCII keeps its space/punct/lowercase handling; Latin accents fold to their
+ * ASCII base; combining marks are dropped; common Unicode dashes/quotes count
+ * as punctuation (word boundaries); anything else (CJK, Greek, ...) passes
+ * through as raw bytes, i.e. the previous behaviour. For CP_CHARS and CP_PUNCT
+ * the folded ASCII byte is written to out[0] (outlen 1). */
+static int fold_cp(uint32_t cp, char *out, int *outlen) {
+    int kind;
+    *outlen = 0;
+    if (cp < 0x80u) {
+        unsigned char c = (unsigned char)cp;
+        if (is_space(c))      { kind = CP_SPACE; }
+        else if (is_punct(c)) { kind = CP_PUNCT; out[0] = (char)c; *outlen = 1; }
+        else { kind = CP_CHARS; out[0] = lower_ascii(c); *outlen = 1; }
+    } else if (cp >= 0x0300u && cp <= 0x036Fu) {
+        kind = CP_DROP;                          /* combining marks */
+    } else if (cp == 0x00A0u) {
+        kind = CP_SPACE;                         /* no-break space */
+    } else if (cp >= 0x00C0u && cp <= 0x00FFu && latin1_fold[cp - 0x00C0u]) {
+        kind = CP_CHARS; out[0] = latin1_fold[cp - 0x00C0u]; *outlen = 1;
+    } else if (cp >= 0x0100u && cp <= 0x017Fu && latinA_fold[cp - 0x0100u]) {
+        kind = CP_CHARS; out[0] = latinA_fold[cp - 0x0100u]; *outlen = 1;
+    } else if (cp >= 0x2010u && cp <= 0x2015u) {
+        kind = CP_PUNCT; out[0] = '-'; *outlen = 1;     /* hyphens / dashes */
+    } else if (cp == 0x2018u || cp == 0x2019u || cp == 0x02BBu) {
+        kind = CP_PUNCT; out[0] = '\''; *outlen = 1;    /* curly / okina */
+    } else if (cp == 0x201Cu || cp == 0x201Du) {
+        kind = CP_PUNCT; out[0] = '"'; *outlen = 1;     /* curly double */
+    } else {
+        kind = CP_PASS;                          /* CJK, Greek, etc.: unchanged */
+    }
+    return kind;
+}
+
 /* llama.cpp WPM: prepend U+2581 ("phantom space") to the word, then greedy
  * longest-match from the front over the prefixed bytes. Word-initial pieces
  * carry the prefix in the vocab; continuations are bare. word1 is a reused
@@ -315,21 +393,9 @@ static void add_word(struct llm * m, const char * w, int wlen,
     }
 }
 
-/* Consume one whitespace/punctuation-delimited word from text[*i], lowercasing
- * ASCII into word. Returns the word length; advances *i past it. */
-static int scan_word(const char * text, int len, int * i,
-                     struct chars * word) {
-    word->count = 0;
-    while (*i < len && !is_space((unsigned char)text[*i]) &&
-           !is_punct((unsigned char)text[*i])) {
-        char c = lower_ascii((unsigned char)text[*i]);
-        chars_put(word, &c, 1);
-        *i += 1;
-    }
-    return (int)word->count;
-}
-
-/* Tokenize text into ids: [CLS] word-pieces... [SEP], truncated to n_ctx. */
+/* Tokenize text into ids: [CLS] word-pieces... [SEP], truncated to n_ctx. Reads
+ * UTF-8 codepoints, folding accents to ASCII and splitting on space/punct
+ * (fold_cp); a word accumulates folded chars and is flushed at each boundary. */
 static void tokenize(struct llm * m, const char * text, struct i32 * ids) {
     i32_put(ids, m->cls_id);
     int len = (int)strlen(text);
@@ -338,17 +404,28 @@ static void tokenize(struct llm * m, const char * text, struct i32 * ids) {
     struct chars word1 = {0};
     struct i32   pieces = {0};
     while (i < len && (int)ids->count < m->n_ctx - 1) {
-        unsigned char c = (unsigned char)text[i];
-        if (is_space(c)) {
-            i += 1;
-        } else if (is_punct(c)) {
-            char pc = (char)c;
-            add_word(m, &pc, 1, &word1, &pieces, ids);
-            i += 1;
-        } else {
-            int wl = scan_word(text, len, &i, &word);
-            add_word(m, word.data, wl, &word1, &pieces, ids);
+        char folded[4];
+        int  flen = 0;
+        int  adv  = 1;
+        uint32_t cp = utf8_decode(text + i, len - i, &adv);
+        int kind = fold_cp(cp, folded, &flen);
+        if (kind == CP_CHARS) {
+            chars_put(&word, folded, (size_t)flen);
+        } else if (kind == CP_PASS) {
+            chars_put(&word, text + i, (size_t)adv);
+        } else if (kind != CP_DROP) {   /* CP_SPACE or CP_PUNCT: word boundary */
+            if (word.count > 0) {
+                add_word(m, word.data, (int)word.count, &word1, &pieces, ids);
+                word.count = 0;
+            }
+            if (kind == CP_PUNCT) {
+                add_word(m, folded, flen, &word1, &pieces, ids);
+            }
         }
+        i += adv;
+    }
+    if (word.count > 0 && (int)ids->count < m->n_ctx - 1) {
+        add_word(m, word.data, (int)word.count, &word1, &pieces, ids);
     }
     i32_put(ids, m->sep_id);
     if ((int)ids->count > m->n_ctx) { ids->count = (size_t)m->n_ctx; }

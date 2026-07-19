@@ -274,9 +274,11 @@ so the LLM answers from the fetched, always-current article text.
   - The index stores only pageid and title, never article text. Text is
     fetched live from Wikipedia, so it is always current and carries the
     real markup.
-  - The tokenizer is English-pragmatic (ASCII lowercase, no Unicode NFD
-    accent-stripping); it matches llama.cpp's MiniLM embeddings to cosine
-    ~1.0 on clean English text, diverging slightly on accented / CJK input.
+  - The tokenizer lowercases ASCII and folds Latin accents to their base
+    letter, BERT-style (NFD + combining-mark drop: "Zürich" -> "zurich",
+    "Marić" -> "maric"); it matches llama.cpp's MiniLM embeddings to cosine
+    ~1.0 on English and accented-Latin text. Non-Latin scripts (CJK, Greek)
+    still fall back to [UNK].
   - Rebuilding for a newer dump: replace the parquet, `make clean`, `make`.
   - SLUGS_MODEL overrides the model path (default minilm.gguf).
 
